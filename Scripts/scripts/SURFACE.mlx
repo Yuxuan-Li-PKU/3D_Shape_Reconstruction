@@ -1,0 +1,9 @@
+<!DOCTYPE FilterScript>
+<FilterScript>
+ <filter name="Surface Reconstruction: Ball Pivoting">
+  <Param value="0" max="1.37263" description="Pivoting Ball radius (0 autoguess)" type="RichAbsPerc" tooltip="The radius of the ball pivoting (rolling) over the set of points. Gaps that are larger than the ball radius will not be filled; similarly the small pits that are smaller than the ball radius will be filled." min="0" name="BallRadius"/>
+  <Param value="20" description="Clustering radius (% of ball radius)" type="RichFloat" tooltip="To avoid the creation of too small triangles, if a vertex is found too close to a previous one, it is clustered/merged with it." name="Clustering"/>
+  <Param value="90" description="Angle Threshold (degrees)" type="RichFloat" tooltip="If we encounter a crease angle that is too large we should stop the ball rolling" name="CreaseThr"/>
+  <Param value="false" description="Delete intial set of faces" type="RichBool" tooltip="if true all the initial faces of the mesh are deleted and the whole surface is rebuilt from scratch, other wise the current faces are used as a starting point. Useful if you run multiple times the algorithm with an incrasing ball radius." name="DeleteFaces"/>
+ </filter>
+</FilterScript>

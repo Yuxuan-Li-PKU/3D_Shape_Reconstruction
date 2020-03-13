@@ -1,7 +1,7 @@
 #---------------------------------------------------------
 # coding=utf-8
-# Train the model. The model is fed in single depth maps or sillhouette and output 
-# 12 images(D&S). The number can be defined by yourself if necessary.
+# Train the model. The model is fed in some depth maps or sillhouettes and output 
+# same images(D&S). The number can be defined by yourself if necessary.
 #
 # Y Li. Peking Univ. 2014 undergraduate.
 # Mail: 1400012981@pku.edu.cn
@@ -164,151 +164,152 @@ def minibatches(inputs, targets1, targets2, batch_size, shuffle=False):
         yy2 = targets2[excerpt].astype(np.float64)/255.0
         yield xx, yy1, yy2
 
+if __name__ == '__main__':
+    
+    print('=========== Reading the data... ===========')
+    # You can change the read function.
+    path=args.path
+    times = '0000'
+    model_path='model/Single_'+times
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
 
-print('=========== Reading the data... ===========')
-# You can change the read function.
-path=args.path
-times = '0000'
-model_path='model/Single_'+times
-if not os.path.exists(model_path):
-    os.makedirs(model_path)
+    if args.DorS == 0:
+        #Input the depth maps.
+        data, depth, silhouette = read_img1(path)
+    else:
+        #Input the silhouettes.
+        data, depth, silhouette = read_img2(path)
 
-if args.DorS == 0:
-    #Input the depth maps.
-    data, depth, silhouette = read_img1(path)
-else:
-    #Input the silhouettes.
-    data, depth, silhouette = read_img2(path)
+    print('The data size: ')
+    print(data.shape)
+    print(depth.shape)
+    print(silhouette.shape)
+    num_ = data.shape[0]
 
-print('The data size: ')
-print(data.shape)
-print(depth.shape)
-print(silhouette.shape)
-num_ = data.shape[0]
+    #shuffle
+    arr = np.arange(num_)
+    np.random.shuffle(arr)
+    data = data[arr]
+    depth = depth[arr]
+    silhouette = silhouette[arr]
 
-#shuffle
-arr = np.arange(num_)
-np.random.shuffle(arr)
-data = data[arr]
-depth = depth[arr]
-silhouette = silhouette[arr]
+    #Devide the data to train set and validation set.
+    ratio=args.ratio
+    s = np.int(num_*ratio)
+    x_train = data[:s]
+    y_train_1 = depth[:s]
+    y_train_2 = silhouette[:s]
+    x_vali = data[s:]
+    y_vali_1 = depth[s:]
+    y_vali_2 = silhouette[s:]
 
-#Devide the data to train set and validation set.
-ratio=args.ratio
-s = np.int(num_*ratio)
-x_train = data[:s]
-y_train_1 = depth[:s]
-y_train_2 = silhouette[:s]
-x_vali = data[s:]
-y_vali_1 = depth[s:]
-y_vali_2 = silhouette[s:]
+    #The number of epoch and batch size.
 
-#The number of epoch and batch size.
+    Epoch_num = 5
+    batch_size = args.batch_size
+    outV = args.outV
+    inV = args.inV
 
-Epoch_num = 5
-batch_size = args.batch_size
-outV = args.outV
-inV = args.inV
+    #Input: x. Output: y1 & y2.
+    x = tf.placeholder(tf.float32, shape=[None,inV, 256,256],name='x')
+    y1 = tf.placeholder(tf.float32,shape=[None,outV, 256, 256], name='y1')
+    y2 = tf.placeholder(tf.float32,shape=[None,outV, 256, 256], name='y2')
 
-#Input: x. Output: y1 & y2.
-x = tf.placeholder(tf.float32, shape=[None,inV, 256,256],name='x')
-y1 = tf.placeholder(tf.float32,shape=[None,outV, 256, 256], name='y1')
-y2 = tf.placeholder(tf.float32,shape=[None,outV, 256, 256], name='y2')
+    #-----------------STRUCTURE----------------------
 
-#-----------------STRUCTURE----------------------
+    mean, log_var = mf.get_encoder(x, inV)
 
-mean, log_var = mf.get_encoder(x, inV)
+    eps = np.random.standard_normal((100))
+    mean_logvar = mean + tf.multiply(tf.exp(0.5*log_var), eps)
 
-eps = np.random.standard_normal((100))
-mean_logvar = mean + tf.multiply(tf.exp(0.5*log_var), eps)
+    G_depth, G_sil = mf.get_decoder(mean_logvar, outV)
 
-G_depth, G_sil = mf.get_decoder(mean_logvar, outV)
+    #For test. Name the generated images.
+    b = tf.constant(value=1,dtype=tf.float32)
+    G_val = tf.multiply(G_depth,b,name='G_val')
+    S_val = tf.multiply(G_sil,b,name='S_val')
 
-#For test. Name the generated images.
-b = tf.constant(value=1,dtype=tf.float32)
-G_val = tf.multiply(G_depth,b,name='G_val')
-S_val = tf.multiply(G_sil,b,name='S_val')
+    #-----------------STRUCTURE----------------------
 
-#-----------------STRUCTURE----------------------
+    saver = tf.train.Saver()
+    #l1 is the KLD, l2/l3 represents the depth maps/silhouettes reconstruction error.
+    loss1,loss2, loss3 = LossFunc(mean, log_var, G_depth, G_sil)
 
-saver = tf.train.Saver()
-#l1 is the KLD, l2/l3 represents the depth maps/silhouettes reconstruction error.
-loss1,loss2, loss3 = LossFunc(mean, log_var, G_depth, G_sil)
+    LR = args.LR
+    train_op=tf.train.AdamOptimizer(learning_rate=LR).minimize(loss1+loss2+loss3) 
+    sess = tf.Session()
 
-LR = args.LR
-train_op=tf.train.AdamOptimizer(learning_rate=LR).minimize(loss1+loss2+loss3) 
-sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+    print('Start training...')
+    for epoch in range(Epoch_num):
+        print('Epoch %d :' % epoch)
+        train_loss1 = 0
+        train_loss2 = 0
+        train_loss3 = 0
+        step = 0
+        print_d = []
+        print_s = []
+        for x_t, y1_t, y2_t in minibatches(x_train, y_train_1, y_train_2, batch_size):
+            _, err1_1, err1_2, err1_3, out_d, out_s = sess.run([train_op, loss1, loss2, loss3, G_depth, G_sil], feed_dict={x: x_t, y1: y1_t, y2: y2_t})
+            #compute the loss every batch
+            #print('...:  ', err)
+            step+=1
+            if step%25 == 0 :
+                print('train step %d error is : %f + %f + %f' % (step, err1_1/4, err1_2/(256*256*outV*batch_size),err1_3/(256*256*outV*batch_size)))
+            train_loss1 += err1_1
+            train_loss2 += err1_2
+            train_loss3 += err1_3
 
-sess.run(tf.global_variables_initializer())
-print('Start training...')
-for epoch in range(Epoch_num):
-    print('Epoch %d :' % epoch)
-    train_loss1 = 0
-    train_loss2 = 0
-    train_loss3 = 0
-    step = 0
-    print_d = []
-    print_s = []
-    for x_t, y1_t, y2_t in minibatches(x_train, y_train_1, y_train_2, batch_size):
-        _, err1_1, err1_2, err1_3, out_d, out_s = sess.run([train_op, loss1, loss2, loss3, G_depth, G_sil], feed_dict={x: x_t, y1: y1_t, y2: y2_t})
-        #compute the loss every batch
-        #print('...:  ', err)
-        step+=1
-        if step%25 == 0 :
-            print('train step %d error is : %f + %f + %f' % (step, err1_1/4, err1_2/(256*256*outV*batch_size),err1_3/(256*256*outV*batch_size)))
-        train_loss1 += err1_1
-        train_loss2 += err1_2
-        train_loss3 += err1_3
+            if epoch == Epoch_num-1 and step <= 1:
+                print_d.append(out_d)
+                print_s.append(out_s)
 
-        if epoch == Epoch_num-1 and step <= 1:
-            print_d.append(out_d)
-            print_s.append(out_s)
+        train_loss1 = train_loss1/s
+        train_loss2 = train_loss2/s
+        train_loss3 = train_loss3/s
+        print('          ----train loss----: ' , train_loss1, train_loss2/(256*256*outV),train_loss3/(256*256*outV))
 
-    train_loss1 = train_loss1/s
-    train_loss2 = train_loss2/s
-    train_loss3 = train_loss3/s
-    print('          ----train loss----: ' , train_loss1, train_loss2/(256*256*outV),train_loss3/(256*256*outV))
+        #validation
+        vali_loss1 = 0
+        vali_loss2 = 0
+        vali_loss3 = 0
+        for x_v, y1_v, y2_v in minibatches(x_vali, y_vali_1, y_vali_1, batch_size):
+            err2_1, err2_2, err2_3 = sess.run([loss1,loss2,loss3], feed_dict = {x: x_v, y1: y1_v, y2: y2_v})
+            vali_loss1 += err2_1
+            vali_loss2 += err2_2
+            vali_loss3 += err2_3
 
-    #validation
-    vali_loss1 = 0
-    vali_loss2 = 0
-    vali_loss3 = 0
-    for x_v, y1_v, y2_v in minibatches(x_vali, y_vali_1, y_vali_1, batch_size):
-        err2_1, err2_2, err2_3 = sess.run([loss1,loss2,loss3], feed_dict = {x: x_v, y1: y1_v, y2: y2_v})
-        vali_loss1 += err2_1
-        vali_loss2 += err2_2
-        vali_loss3 += err2_3
+        vali_loss1 = vali_loss1/(num_-s)
+        vali_loss2 = vali_loss2/(num_-s)
+        vali_loss3 = vali_loss3/(num_-s)
+        print('          ----valid loss----: ' , vali_loss1, vali_loss2/(256*256*outV), vali_loss3/(256*256*outV))
 
-    vali_loss1 = vali_loss1/(num_-s)
-    vali_loss2 = vali_loss2/(num_-s)
-    vali_loss3 = vali_loss3/(num_-s)
-    print('          ----valid loss----: ' , vali_loss1, vali_loss2/(256*256*outV), vali_loss3/(256*256*outV))
+        #save the model.ckpt every five epoch
+        if epoch % 5 == 0 and epoch > 19:
+            saver.save(sess, model_path + '/epoch_'+str(epoch) +  '.ckpt')
+        '''
+        #save the last epoch's validation result.
+        if epoch == Epoch_num-1:
+            print_d = np.asarray(print_d)
+            print_s = np.asarray(print_s)
+            #save the image
+            save_path = 'gen/'
+            samp_num = 0
+            for k in range(list(print_d.shape)[0]):
+                for s in range(list(print_d.shape)[1]):
+                    samp_num += 1
+                    for l in range(18):
+                        d_name = 'depth_num'+str(samp_num).zfill(3)+'_'+str(l).zfill(2)+'.jpg'
+                        s_name = 'sil_num'+str(samp_num).zfill(3)+'_'+str(l).zfill(2)+'.jpg'
+                        d_im = np.array(print_d[k][s][l]*255).astype(np.uint8)
+                        s_im = np.array(print_s[k][s][l]*255).astype(np.uint8)
+                        save_d = Image.fromarray(d_im)
+                        save_s = Image.fromarray(s_im)
+                        save_d.save(save_path+d_name)
+                        save_s.save(save_path+s_name)
+        '''
+    saver.save(sess, model_path + '/last.ckpt')
+    sess.close()
 
-    #save the model.ckpt every five epoch
-    if epoch % 5 == 0 and epoch > 19:
-        saver.save(sess, model_path + '/epoch_'+str(epoch) +  '.ckpt')
-    '''
-    #save the last epoch's validation result.
-    if epoch == Epoch_num-1:
-        print_d = np.asarray(print_d)
-        print_s = np.asarray(print_s)
-        #save the image
-        save_path = 'gen/'
-        samp_num = 0
-        for k in range(list(print_d.shape)[0]):
-            for s in range(list(print_d.shape)[1]):
-                samp_num += 1
-                for l in range(18):
-                    d_name = 'depth_num'+str(samp_num).zfill(3)+'_'+str(l).zfill(2)+'.jpg'
-                    s_name = 'sil_num'+str(samp_num).zfill(3)+'_'+str(l).zfill(2)+'.jpg'
-                    d_im = np.array(print_d[k][s][l]*255).astype(np.uint8)
-                    s_im = np.array(print_s[k][s][l]*255).astype(np.uint8)
-                    save_d = Image.fromarray(d_im)
-                    save_s = Image.fromarray(s_im)
-                    save_d.save(save_path+d_name)
-                    save_s.save(save_path+s_name)
-    '''
-saver.save(sess, model_path + '/last.ckpt')
-sess.close()
-
-print('End of training, model.ckpt saved.')
+    print('End of training, model.ckpt saved.')
